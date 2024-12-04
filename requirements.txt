@@ -1,0 +1,8 @@
+watchdog
+fastapi[standard]
+pandas
+djongo
+pymongo
+pymongo[srv]
+motor
+python-dotenv
