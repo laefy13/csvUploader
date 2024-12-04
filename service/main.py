@@ -9,21 +9,25 @@ import os
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor
 import argparse
+import logging
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 load_dotenv(dotenv_path="../.env")
 
 class EventHandler(FileSystemEventHandler):
-    def __init__(self, workers:int):
+    def __init__(self, workers: int):
         client = motor.motor_asyncio.AsyncIOMotorClient(os.getenv("MONGO_URL"))
         db = client.examdb
         self.medalists_collection = db.get_collection("medalists_collection")
 
         self.executor = ThreadPoolExecutor(max_workers=workers)
-        self.medal_type = {1:"G", 2:"S", 3:"C" }
-    
+        self.medal_type = {1: "G", 2: "S", 3: "C"}
+
     def on_any_event(self, event: FileSystemEvent) -> None:
-        if event.event_type == "created" and "archive" not in event.src_path:            
-            print(f"File created: {event.src_path}")
+        if event.event_type == "created" and "archive" not in event.src_path:
+            logger.info(f"File created: {event.src_path}")
             self.executor.submit(self.runAsyncTask, event.src_path)
 
     def waitFile(self, file_path: str, max_attempts: int = 10, delay: int = 1) -> bool:
@@ -35,6 +39,7 @@ class EventHandler(FileSystemEventHandler):
             except IOError:
                 attempts += 1
                 time.sleep(delay)
+        logger.warning(f"File not accessible after {max_attempts} attempts")
         return False
 
     def runAsyncTask(self, file_path: str) -> None:
@@ -42,10 +47,10 @@ class EventHandler(FileSystemEventHandler):
 
     async def processFile(self, file_path: str) -> None:
         if not self.waitFile(file_path=file_path):
-            print("File not accessible")
+            logger.error("File not accessible")
             return
         try:
-            print("Reading CSV and saving to MongoDB")
+            logger.info("Reading CSV and saving to MongoDB")
             df = pd.read_csv(file_path)
 
             medalists = []
@@ -67,27 +72,30 @@ class EventHandler(FileSystemEventHandler):
 
                     existing = await self.medalists_collection.find_one(medalist)
                     if existing:
-                        print("Medalist already saved")
+                        logger.info("Medalist already saved")
                         continue
 
                     medalists.append(medalist)
                 except Exception as e:
-                    print(f"Error: {e}")
+                    logger.error(f"Error processing row: {e}")
 
             if medalists:
                 await self.medalists_collection.insert_many(medalists)
-                print(f"Inserted {len(medalists)} records into MongoDB")
+                logger.info(f"Inserted {len(medalists)} records into MongoDB")
             else:
-                print("No valid records to insert")
+                logger.info("No valid records to insert")
+
             archive_path = os.path.join(os.path.dirname(file_path), "archive")
             if not os.path.exists(archive_path):
                 os.makedirs(archive_path)
             os.rename(file_path, os.path.join(archive_path, os.path.basename(file_path)))
-        except Exception as e:
-            print(f"Error processing file {file_path}: {e}")
+            logger.info(f"Moved file to archive: {file_path}")
             
+        except Exception as e:
+            logger.error(f"Error processing file {file_path}: {e}")
 
-async def startObserver(workers:int):
+
+async def startObserver(workers: int):
     event_handler = EventHandler(workers)
     observer = Observer()
     observer.schedule(event_handler, "../storage/app/medalists", recursive=True)
@@ -103,4 +111,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--workers", type=int, default=5, help="Number of workers")
     args = parser.parse_args()
-    asyncio.run(startObserver(args.workers))
+    try:
+        logger.info(f"Oberserver starting...")
+        asyncio.run(startObserver(args.workers))
+    except KeyboardInterrupt:
+        logger.info(f"Exiting...")
+        pass
+    except Exception as e:
+        logger.error(f"Error: {e}")

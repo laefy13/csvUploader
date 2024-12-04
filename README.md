@@ -33,5 +33,6 @@
 ## Assumptions
  - The /aggregated_stats/event endpoint will send back 10 groups "event", "discipline", and "event_date", with other data.
  - The files in storage/app/medialists won't be manually handled by anyone.
+ - The maximum file size will only be 50mb
 
 
